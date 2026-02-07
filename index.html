@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>暇潰管理</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 10px;
+            user-select: none;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 10px;
+        }
+
+        h1 {
+            color: white;
+            font-size: 1.5rem;
+            font-weight: 700;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.2);
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 280px;
+            gap: 12px;
+            align-items: start;
+        }
+
+        @media (max-width: 800px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            padding: 12px;
+        }
+
+        .card-title {
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .card-title::before {
+            content: '';
+            width: 3px;
+            height: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 2px;
+        }
+
+        .time-slots {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            grid-template-rows: repeat(9, auto);
+            grid-auto-flow: column;
+            gap: 4px;
+        }
+
+        .time-slot {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 8px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            border: 2px solid transparent;
+        }
+
+        .time-slot:hover {
+            background: #f0f1f3;
+        }
+
+        .time-slot.selected {
+            border-color: #667eea;
+            background: #ede9fe;
+        }
+
+        .time-slot.has-value {
+            background: #f0fdf4;
+        }
+
+        .time-slot.selected.has-value {
+            background: #ede9fe;
+        }
+
+        .time-label {
+            font-size: 0.7rem;
+            font-weight: 500;
+            color: #666;
+            min-width: 75px;
+            white-space: nowrap;
+        }
+
+        .time-value {
+            flex: 1;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #667eea;
+            text-align: right;
+        }
+
+        .time-value.empty {
+            color: #ccc;
+        }
+
+        .summary-section {
+            position: sticky;
+            top: 10px;
+        }
+
+        .code-buttons {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 4px;
+            margin-bottom: 12px;
+        }
+
+        .code-btn {
+            padding: 8px 6px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            text-align: center;
+        }
+
+        .code-btn:hover {
+            border-color: #667eea;
+            background: #f8f5ff;
+        }
+
+        .code-btn:active {
+            transform: scale(0.97);
+        }
+
+        .code-btn-code {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .code-btn-desc {
+            font-size: 0.6rem;
+            color: #888;
+            margin-top: 2px;
+        }
+
+        .code-btn.clear-btn {
+            border-color: #fca5a5;
+            background: #fef2f2;
+        }
+
+        .code-btn.clear-btn:hover {
+            border-color: #ef4444;
+            background: #fee2e2;
+        }
+
+        .code-btn.clear-btn .code-btn-code {
+            color: #ef4444;
+        }
+
+        .selection-hint {
+            font-size: 0.7rem;
+            color: #888;
+            text-align: center;
+            margin-bottom: 8px;
+            padding: 6px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+
+        .selection-hint strong {
+            color: #667eea;
+        }
+
+        .summary-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-bottom: 8px;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .summary-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 10px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            font-size: 0.75rem;
+        }
+
+        .summary-item-code {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .summary-item-time {
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .total-time {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            color: white;
+            margin-bottom: 8px;
+            font-size: 0.85rem;
+        }
+
+        .total-value {
+            font-size: 1.1rem;
+            font-weight: 700;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 10px 16px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.5);
+        }
+
+        .empty-message {
+            text-align: center;
+            color: #999;
+            padding: 12px;
+            font-size: 0.75rem;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%) translateY(80px);
+            background: #333;
+            color: white;
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 1000;
+        }
+
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>暇潰管理</h1>
+        </header>
+
+        <div class="main-content">
+            <div class="card">
+                <h2 class="card-title">タイムスロット（クリックで選択）</h2>
+                <div class="time-slots" id="timeSlots"></div>
+            </div>
+
+            <div class="summary-section">
+                <div class="card">
+                    <h2 class="card-title">コード入力</h2>
+                    <div class="selection-hint" id="selectionHint">時間枠を選択してください</div>
+                    <div class="code-buttons" id="codeButtons"></div>
+
+                    <h2 class="card-title">今日の集計</h2>
+                    <div class="summary-list" id="summaryList">
+                        <p class="empty-message">まだ記録がありません</p>
+                    </div>
+                    <div class="total-time">
+                        <span>合計</span>
+                        <span class="total-value" id="totalTime">0:00</span>
+                    </div>
+                    <button class="btn btn-primary" onclick="copyToClipboard()">
+                        今日の暇潰を終了
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast">クリップボードにコピーしました！</div>
+
+    <script>
+        const himatsubushiCodes = [
+            { code: 'MTG', description: 'ミーティング' },
+            { code: 'DEV', description: '開発作業' },
+            { code: 'DOC', description: 'ドキュメント' },
+            { code: 'REV', description: 'レビュー' },
+            { code: 'STD', description: '勉強・調査' },
+            { code: 'COM', description: '雑談' },
+            { code: 'BRK', description: '休憩' },
+            { code: 'LCH', description: 'ランチ' },
+            { code: 'ADM', description: '事務作業' },
+            { code: 'OTH', description: 'その他' },
+        ];
+
+        const timeSlots = [];
+        for (let hour = 9; hour < 18; hour++) {
+            for (let min = 0; min < 60; min += 30) {
+                if (hour === 9 && min === 0) continue;
+                const startHour = hour;
+                const startMin = min;
+                const endHour = min === 30 ? hour + 1 : hour;
+                const endMin = min === 30 ? 0 : 30;
+
+                const formatTime = (h, m) => `${h}:${m.toString().padStart(2, '0')}`;
+                timeSlots.push({
+                    start: formatTime(startHour, startMin),
+                    end: formatTime(endHour, endMin),
+                    value: null
+                });
+            }
+        }
+        timeSlots.push({ start: '18:00', end: '18:30', value: null });
+
+        let selectedSlots = new Set();
+        let isDragging = false;
+        let dragStartIndex = null;
+        let dragCurrentIndex = null;
+        let preselectedSlots = new Set(); // ドラッグ開始前の選択状態を保持
+
+        function renderTimeSlots() {
+            const container = document.getElementById('timeSlots');
+            container.innerHTML = timeSlots.map((slot, index) => `
+                <div class="time-slot" id="slot-${index}" data-index="${index}">
+                    <span class="time-label">${slot.start}-${slot.end}</span>
+                    <span class="time-value empty" id="value-${index}">--</span>
+                </div>
+            `).join('');
+
+            // ドラッグ選択のイベント設定
+            timeSlots.forEach((_, index) => {
+                const el = document.getElementById(`slot-${index}`);
+
+                el.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    isDragging = true;
+                    dragStartIndex = index;
+                    dragCurrentIndex = index;
+
+                    if (e.shiftKey && selectedSlots.size > 0) {
+                        // Shift+クリックで範囲選択
+                        preselectedSlots = new Set(selectedSlots);
+                        const lastSelected = Math.max(...selectedSlots);
+                        const start = Math.min(lastSelected, index);
+                        const end = Math.max(lastSelected, index);
+                        for (let i = start; i <= end; i++) {
+                            selectedSlots.add(i);
+                        }
+                    } else if (e.ctrlKey || e.metaKey) {
+                        // Ctrl/Cmd+クリックで追加選択
+                        preselectedSlots = new Set(selectedSlots);
+                        selectedSlots.add(index);
+                    } else {
+                        // 通常クリック：選択をクリアして新規選択
+                        preselectedSlots = new Set();
+                        selectedSlots.clear();
+                        selectedSlots.add(index);
+                    }
+
+                    updateSlotStyles();
+                    updateSelectionHint();
+                });
+
+                el.addEventListener('mouseenter', () => {
+                    if (isDragging) {
+                        dragCurrentIndex = index;
+                        updateDragSelection();
+                    }
+                });
+            });
+
+            // グローバルなmouseupイベント
+            document.addEventListener('mouseup', () => {
+                if (isDragging) {
+                    isDragging = false;
+                    dragStartIndex = null;
+                    dragCurrentIndex = null;
+                }
+            });
+        }
+
+        function updateDragSelection() {
+            if (dragStartIndex === null || dragCurrentIndex === null) return;
+
+            const start = Math.min(dragStartIndex, dragCurrentIndex);
+            const end = Math.max(dragStartIndex, dragCurrentIndex);
+
+            // 選択を再構築：ドラッグ開始前の選択 + ドラッグ範囲
+            selectedSlots = new Set(preselectedSlots);
+            for (let i = start; i <= end; i++) {
+                selectedSlots.add(i);
+            }
+
+            updateSlotStyles();
+            updateSelectionHint();
+        }
+
+        function renderCodeButtons() {
+            const container = document.getElementById('codeButtons');
+            container.innerHTML = himatsubushiCodes.map(item => `
+                <div class="code-btn" onclick="applyCode('${item.code}')">
+                    <div class="code-btn-code">${item.code}</div>
+                    <div class="code-btn-desc">${item.description}</div>
+                </div>
+            `).join('') + `
+                <div class="code-btn clear-btn" onclick="applyCode(null)">
+                    <div class="code-btn-code">CLR</div>
+                    <div class="code-btn-desc">クリア</div>
+                </div>
+            `;
+        }
+
+        function updateSlotStyles() {
+            timeSlots.forEach((slot, index) => {
+                const el = document.getElementById(`slot-${index}`);
+                const valueEl = document.getElementById(`value-${index}`);
+
+                el.classList.toggle('selected', selectedSlots.has(index));
+                el.classList.toggle('has-value', !!slot.value);
+
+                if (slot.value) {
+                    valueEl.textContent = slot.value;
+                    valueEl.classList.remove('empty');
+                } else {
+                    valueEl.textContent = '--';
+                    valueEl.classList.add('empty');
+                }
+            });
+        }
+
+        function updateSelectionHint() {
+            const hint = document.getElementById('selectionHint');
+            const count = selectedSlots.size;
+            if (count === 0) {
+                hint.innerHTML = '時間枠を選択してください';
+            } else {
+                hint.innerHTML = `<strong>${count}個</strong>の時間枠を選択中`;
+            }
+        }
+
+        function applyCode(code) {
+            if (selectedSlots.size === 0) {
+                showToast('時間枠を選択してください');
+                return;
+            }
+
+            selectedSlots.forEach(index => {
+                timeSlots[index].value = code;
+            });
+
+            selectedSlots.clear();
+            updateSlotStyles();
+            updateSelectionHint();
+            updateSummary();
+        }
+
+        function updateSummary() {
+            const summary = {};
+            let totalMinutes = 0;
+
+            timeSlots.forEach(slot => {
+                if (slot.value) {
+                    if (!summary[slot.value]) summary[slot.value] = 0;
+                    summary[slot.value] += 30;
+                    totalMinutes += 30;
+                }
+            });
+
+            const container = document.getElementById('summaryList');
+
+            if (Object.keys(summary).length === 0) {
+                container.innerHTML = '<p class="empty-message">まだ記録がありません</p>';
+            } else {
+                container.innerHTML = Object.entries(summary)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([code, minutes]) => {
+                        const hours = Math.floor(minutes / 60);
+                        const mins = minutes % 60;
+                        const timeStr = hours > 0 ? `${hours}h${mins > 0 ? mins + 'm' : ''}` : `${mins}m`;
+                        const codeInfo = himatsubushiCodes.find(c => c.code === code);
+                        return `
+                            <div class="summary-item">
+                                <span class="summary-item-code">${code} ${codeInfo?.description || ''}</span>
+                                <span class="summary-item-time">${timeStr}</span>
+                            </div>
+                        `;
+                    }).join('');
+            }
+
+            const totalHours = Math.floor(totalMinutes / 60);
+            const totalMins = totalMinutes % 60;
+            document.getElementById('totalTime').textContent = `${totalHours}:${totalMins.toString().padStart(2, '0')}`;
+        }
+
+        function copyToClipboard() {
+            const summary = {};
+
+            timeSlots.forEach(slot => {
+                if (slot.value) {
+                    if (!summary[slot.value]) summary[slot.value] = 0;
+                    summary[slot.value] += 30;
+                }
+            });
+
+            if (Object.keys(summary).length === 0) {
+                showToast('記録がありません');
+                return;
+            }
+
+            const lines = ['【本日の暇潰し実績】', ''];
+
+            Object.entries(summary)
+                .sort((a, b) => b[1] - a[1])
+                .forEach(([code, minutes]) => {
+                    const hours = Math.floor(minutes / 60);
+                    const mins = minutes % 60;
+                    const timeStr = hours > 0 ? `${hours}時間${mins > 0 ? mins + '分' : ''}` : `${mins}分`;
+                    const codeInfo = himatsubushiCodes.find(c => c.code === code);
+                    lines.push(`${code}: ${timeStr} (${codeInfo?.description || ''})`);
+                });
+
+            const totalMinutes = Object.values(summary).reduce((a, b) => a + b, 0);
+            const totalHours = Math.floor(totalMinutes / 60);
+            const totalMins = totalMinutes % 60;
+            lines.push('');
+            lines.push(`合計: ${totalHours}時間${totalMins > 0 ? totalMins + '分' : ''}`);
+
+            navigator.clipboard.writeText(lines.join('\n')).then(() => {
+                showToast('クリップボードにコピーしました！');
+            }).catch(() => {
+                showToast('コピーに失敗しました');
+            });
+        }
+
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 2500);
+        }
+
+        renderTimeSlots();
+        renderCodeButtons();
+        updateSummary();
+    </script>
+</body>
+</html>
