@@ -10,28 +10,130 @@ const himatsubushiCodes = [
     { code: 'HMTB9', description: 'おやつ食べる' },
 ];
 
-// データ構造:
-// 30分スロット: { value, subdivided, subSlots[3] }
-// 10分サブスロット: { value, subdivided, microSlots[10] }
-// 1分マイクロスロット: { value, subdivided, nanoSlots[6] }
-// 10秒ナノスロット: { value }
+// レベル設定配列 — レベル追加は1行追加 + CSS追加のみ
+const LEVELS = [
+    { seconds: 1800, cssClass: '',        splitLabel: null,          mergeLabel: null },
+    { seconds: 600,  cssClass: 'level-1', splitLabel: '10分に分割',  mergeLabel: '30分に戻す' },
+    { seconds: 60,   cssClass: 'level-2', splitLabel: '1分に分割',   mergeLabel: '10分に戻す' },
+    { seconds: 10,   cssClass: 'level-3', splitLabel: '10秒に分割',  mergeLabel: '1分に戻す' },
+];
+
 const timeSlots = [];
 
-function createNanoSlots() {
-    return Array.from({ length: 6 }, () => ({ value: null }));
+// --- コアユーティリティ関数 ---
+
+function parseSlotId(id) {
+    const parts = id.split('-').map(Number);
+    return { slotIndex: parts[0], path: parts.slice(1) };
 }
 
-function createMicroSlots() {
-    return Array.from({ length: 10 }, () => ({ value: null, subdivided: false, nanoSlots: createNanoSlots() }));
-}
-
-function createSubSlots() {
-    return Array.from({ length: 3 }, () => ({
+function createChildren(depth) {
+    if (depth >= LEVELS.length - 1) return [];
+    const count = LEVELS[depth].seconds / LEVELS[depth + 1].seconds;
+    return Array.from({ length: count }, () => ({
         value: null,
         subdivided: false,
-        microSlots: createMicroSlots()
+        children: createChildren(depth + 1)
     }));
 }
+
+function getNodeAtPath(slotIndex, path) {
+    let node = timeSlots[slotIndex];
+    for (const idx of path) {
+        node = node.children[idx];
+    }
+    return node;
+}
+
+function collectLeafIds(node, prefix, depth) {
+    if (node.subdivided && depth < LEVELS.length - 1) {
+        const ids = [];
+        for (let i = 0; i < node.children.length; i++) {
+            ids.push(...collectLeafIds(node.children[i], `${prefix}-${i}`, depth + 1));
+        }
+        return ids;
+    }
+    return [prefix];
+}
+
+function collectLeafValues(node, depth) {
+    if (node.subdivided && depth < LEVELS.length - 1) {
+        const vals = [];
+        for (const child of node.children) {
+            vals.push(...collectLeafValues(child, depth + 1));
+        }
+        return vals;
+    }
+    return [node.value];
+}
+
+function accumulateSummary(node, depth, summary) {
+    if (node.subdivided && depth < LEVELS.length - 1) {
+        for (const child of node.children) {
+            accumulateSummary(child, depth + 1, summary);
+        }
+    } else if (node.value) {
+        const sec = LEVELS[depth].seconds;
+        summary[node.value] = (summary[node.value] || 0) + sec;
+    }
+}
+
+function fillNodeRecursive(node, depth, code) {
+    if (node.subdivided && depth < LEVELS.length - 1) {
+        for (const child of node.children) {
+            fillNodeRecursive(child, depth + 1, code);
+        }
+    } else {
+        node.value = code;
+    }
+}
+
+// --- localStorage 保存/復元 ---
+
+const STORAGE_KEY = 'himatsubushi-data';
+
+function serializeNode(node) {
+    return {
+        value: node.value,
+        subdivided: node.subdivided,
+        children: node.children ? node.children.map(serializeNode) : []
+    };
+}
+
+function restoreNode(node, saved) {
+    node.value = saved.value;
+    node.subdivided = saved.subdivided;
+    if (saved.children && node.children) {
+        for (let i = 0; i < Math.min(saved.children.length, node.children.length); i++) {
+            restoreNode(node.children[i], saved.children[i]);
+        }
+    }
+}
+
+function saveToStorage() {
+    try {
+        const data = timeSlots.map(serializeNode);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } catch (e) {
+        // localStorage容量超えなど — 黙って無視
+    }
+}
+
+function loadFromStorage() {
+    try {
+        const json = localStorage.getItem(STORAGE_KEY);
+        if (!json) return;
+        const data = JSON.parse(json);
+        if (!Array.isArray(data) || data.length !== timeSlots.length) return;
+        for (let i = 0; i < timeSlots.length; i++) {
+            restoreNode(timeSlots[i], data[i]);
+        }
+    } catch (e) {
+        // パースエラーなど — 無視して初期状態で起動
+    }
+}
+
+// --- 初期化 ---
 
 function initTimeSlots() {
     for (let hour = 7; hour < 24; hour++) {
@@ -52,19 +154,24 @@ function initTimeSlots() {
                 startMin,
                 value: null,
                 subdivided: false,
-                subSlots: createSubSlots()
+                children: createChildren(0)
             });
         }
     }
 }
 
+// --- 選択状態 ---
+
 let selectedSlots = new Set();
 let cursorSlotId = null;
 let isDragging = false;
+let didDrag = false;
 let dragStartId = null;
 let dragCurrentId = null;
 let preselectedSlots = new Set();
 let contextMenuTarget = null;
+
+// --- 表示ヘルパー ---
 
 function getValueDisplay(value) {
     if (!value) return '--';
@@ -75,107 +182,65 @@ function getValueDisplay(value) {
     return value;
 }
 
-function getSlotLabel(slotIndex, subIndex = null, microIndex = null, nanoIndex = null) {
+function getSlotLabel(slotIndex, path) {
     const slot = timeSlots[slotIndex];
-    const fmt = (h, m) => `${h}:${m.toString().padStart(2, '0')}`;
+    const baseSeconds = slot.startHour * 3600 + slot.startMin * 60;
 
-    if (subIndex === null) {
-        return slot.start;
-    } else if (microIndex === null) {
-        const baseMin = slot.startMin + subIndex * 10;
-        const startH = slot.startHour + Math.floor(baseMin / 60);
-        const startM = baseMin % 60;
-        return fmt(startH, startM);
-    } else if (nanoIndex === null) {
-        const baseMin = slot.startMin + subIndex * 10 + microIndex;
-        const startH = slot.startHour + Math.floor(baseMin / 60);
-        const startM = baseMin % 60;
-        return fmt(startH, startM);
-    } else {
-        const baseSec = (slot.startMin + subIndex * 10 + microIndex) * 60 + nanoIndex * 10;
-        const totalMin = Math.floor(baseSec / 60);
-        const sec = baseSec % 60;
-        const startH = slot.startHour + Math.floor(totalMin / 60);
-        const startM = totalMin % 60;
-        return `${startH}:${startM.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+    let offsetSeconds = 0;
+    for (let d = 0; d < path.length; d++) {
+        offsetSeconds += path[d] * LEVELS[d + 1].seconds;
     }
+
+    const totalSeconds = baseSeconds + offsetSeconds;
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+
+    if (s > 0) {
+        return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+    return `${h}:${m.toString().padStart(2, '0')}`;
+}
+
+// --- レンダリング ---
+
+function renderNode(node, prefix, depth) {
+    if (node.subdivided && depth < LEVELS.length - 1) {
+        let html = '';
+        for (let i = 0; i < node.children.length; i++) {
+            html += renderNode(node.children[i], `${prefix}-${i}`, depth + 1);
+        }
+        return html;
+    }
+
+    const { slotIndex, path } = parseSlotId(prefix);
+    const cssClass = LEVELS[depth].cssClass;
+    const display = getValueDisplay(node.value);
+    return `
+        <div class="time-slot ${cssClass}" data-slot-id="${prefix}">
+            <span class="time-label">${getSlotLabel(slotIndex, path)}</span>
+            <span class="time-value ${node.value ? '' : 'empty'}">${display}</span>
+        </div>
+    `;
 }
 
 function renderTimeSlots() {
     const container = document.getElementById('timeSlots');
+    const halfPoint = Math.ceil(timeSlots.length / 2);
     let html = '';
 
-    const halfPoint = Math.ceil(timeSlots.length / 2);
     timeSlots.forEach((slot, index) => {
         const column = index < halfPoint ? 'left-column' : 'right-column';
         html += `<div class="slot-group ${column}" data-slot-index="${index}">`;
-
-        if (slot.subdivided) {
-            // 10分サブスロットを表示
-            for (let sub = 0; sub < 3; sub++) {
-                const subSlot = slot.subSlots[sub];
-
-                if (subSlot.subdivided) {
-                    // 1分マイクロスロットを表示
-                    for (let micro = 0; micro < 10; micro++) {
-                        const microSlot = subSlot.microSlots[micro];
-
-                        if (microSlot.subdivided) {
-                            // 10秒ナノスロットを表示
-                            for (let nano = 0; nano < 6; nano++) {
-                                const slotId = `${index}-${sub}-${micro}-${nano}`;
-                                const nanoValue = microSlot.nanoSlots[nano].value;
-                                const display = getValueDisplay(nanoValue);
-                                html += `
-                                    <div class="time-slot nano-slot" data-slot-id="${slotId}">
-                                        <span class="time-label">${getSlotLabel(index, sub, micro, nano)}</span>
-                                        <span class="time-value ${nanoValue ? '' : 'empty'}">${display}</span>
-                                    </div>
-                                `;
-                            }
-                        } else {
-                            const slotId = `${index}-${sub}-${micro}`;
-                            const microValue = microSlot.value;
-                            const display = getValueDisplay(microValue);
-                            html += `
-                                <div class="time-slot micro-slot" data-slot-id="${slotId}">
-                                    <span class="time-label">${getSlotLabel(index, sub, micro)}</span>
-                                    <span class="time-value ${microValue ? '' : 'empty'}">${display}</span>
-                                </div>
-                            `;
-                        }
-                    }
-                } else {
-                    // 10分スロットを表示
-                    const slotId = `${index}-${sub}`;
-                    const subValue = subSlot.value;
-                    const display = getValueDisplay(subValue);
-                    html += `
-                        <div class="time-slot sub-slot" data-slot-id="${slotId}">
-                            <span class="time-label">${getSlotLabel(index, sub)}</span>
-                            <span class="time-value ${subValue ? '' : 'empty'}">${display}</span>
-                        </div>
-                    `;
-                }
-            }
-        } else {
-            // 30分スロットを表示
-            const slotId = `${index}`;
-            const display = getValueDisplay(slot.value);
-            html += `
-                <div class="time-slot" data-slot-id="${slotId}">
-                    <span class="time-label">${slot.start}</span>
-                    <span class="time-value ${slot.value ? '' : 'empty'}">${display}</span>
-                </div>
-            `;
-        }
-
+        html += renderNode(slot, `${index}`, 0);
         html += '</div>';
     });
 
     container.innerHTML = html;
     attachSlotEvents();
 }
+
+// --- イベント ---
 
 function attachSlotEvents() {
     const slots = document.querySelectorAll('.time-slot');
@@ -222,6 +287,7 @@ function attachSlotEvents() {
 
     document.addEventListener('mouseup', () => {
         if (isDragging) {
+            didDrag = true;
             isDragging = false;
             dragStartId = null;
             dragCurrentId = null;
@@ -237,33 +303,29 @@ function attachSlotEvents() {
         if (!codeMenu.contains(e.target)) {
             codeMenu.classList.remove('show');
         }
+
+        // ドラッグ直後のclickでは選択解除しない
+        if (didDrag) {
+            didDrag = false;
+            return;
+        }
+
+        // タイムスロット・コードボタン・メニュー以外をクリックしたら選択解除
+        if (!e.target.closest('.time-slot, .code-btn, .context-menu')) {
+            selectedSlots.clear();
+            cursorSlotId = null;
+            updateSlotStyles();
+            updateSelectionHint();
+        }
     });
 }
+
+// --- スロットID収集 ---
 
 function getAllSlotIds() {
     const ids = [];
     timeSlots.forEach((slot, index) => {
-        if (slot.subdivided) {
-            for (let sub = 0; sub < 3; sub++) {
-                const subSlot = slot.subSlots[sub];
-                if (subSlot.subdivided) {
-                    for (let micro = 0; micro < 10; micro++) {
-                        const microSlot = subSlot.microSlots[micro];
-                        if (microSlot.subdivided) {
-                            for (let nano = 0; nano < 6; nano++) {
-                                ids.push(`${index}-${sub}-${micro}-${nano}`);
-                            }
-                        } else {
-                            ids.push(`${index}-${sub}-${micro}`);
-                        }
-                    }
-                } else {
-                    ids.push(`${index}-${sub}`);
-                }
-            }
-        } else {
-            ids.push(`${index}`);
-        }
+        ids.push(...collectLeafIds(slot, `${index}`, 0));
     });
     return ids;
 }
@@ -275,38 +337,19 @@ function getColumnSlotIds() {
 
     timeSlots.forEach((slot, index) => {
         const target = index < halfPoint ? leftIds : rightIds;
-        if (slot.subdivided) {
-            for (let sub = 0; sub < 3; sub++) {
-                const subSlot = slot.subSlots[sub];
-                if (subSlot.subdivided) {
-                    for (let micro = 0; micro < 10; micro++) {
-                        const microSlot = subSlot.microSlots[micro];
-                        if (microSlot.subdivided) {
-                            for (let nano = 0; nano < 6; nano++) {
-                                target.push(`${index}-${sub}-${micro}-${nano}`);
-                            }
-                        } else {
-                            target.push(`${index}-${sub}-${micro}`);
-                        }
-                    }
-                } else {
-                    target.push(`${index}-${sub}`);
-                }
-            }
-        } else {
-            target.push(`${index}`);
-        }
+        target.push(...collectLeafIds(slot, `${index}`, 0));
     });
 
     return { leftIds, rightIds };
 }
+
+// --- カーソル移動 ---
 
 function moveCursor(direction, shiftKey) {
     const { leftIds, rightIds } = getColumnSlotIds();
     const allIds = getAllSlotIds();
 
     if (!cursorSlotId || !allIds.includes(cursorSlotId)) {
-        // カーソルがなければ最初のスロットへ
         cursorSlotId = allIds[0] || null;
         if (!shiftKey) {
             selectedSlots.clear();
@@ -319,30 +362,24 @@ function moveCursor(direction, shiftKey) {
 
     const inLeft = leftIds.includes(cursorSlotId);
     const currentCol = inLeft ? leftIds : rightIds;
-    const otherCol = inLeft ? rightIds : leftIds;
     const currentIdx = currentCol.indexOf(cursorSlotId);
     let newId = null;
 
     if (direction === 'up') {
         if (currentIdx > 0) {
             newId = currentCol[currentIdx - 1];
-        } else if (inLeft) {
-            // 左列の一番上 → 右列の一番下（ループではなく逆カラムには飛ばない）
-        } else {
-            // 右列の一番上 → 左列の一番下
+        } else if (!inLeft) {
             newId = leftIds[leftIds.length - 1];
         }
     } else if (direction === 'down') {
         if (currentIdx < currentCol.length - 1) {
             newId = currentCol[currentIdx + 1];
         } else if (inLeft) {
-            // 左列の一番下 → 右列の一番上
             newId = rightIds[0];
         }
     } else if (direction === 'left' || direction === 'right') {
         const targetCol = (direction === 'left') ? leftIds : rightIds;
         if (targetCol === currentCol) return;
-        // 同じ行位置あたりに飛ぶ
         const ratio = currentCol.length > 1 ? currentIdx / (currentCol.length - 1) : 0;
         const targetIdx = Math.round(ratio * (targetCol.length - 1));
         newId = targetCol[targetIdx];
@@ -350,11 +387,9 @@ function moveCursor(direction, shiftKey) {
 
     if (!newId) return;
 
-    const anchorId = cursorSlotId;
     cursorSlotId = newId;
 
     if (shiftKey) {
-        // Shift+矢印: 選択範囲を拡張
         selectedSlots.add(newId);
     } else {
         selectedSlots.clear();
@@ -364,15 +399,8 @@ function moveCursor(direction, shiftKey) {
     updateSlotStyles();
     updateSelectionHint();
 
-    // カーソル位置が見えるようにスクロール
     const el = document.querySelector(`[data-slot-id="${newId}"]`);
     if (el) el.scrollIntoView({ block: 'nearest' });
-}
-
-function updateCursorStyle() {
-    document.querySelectorAll('.time-slot').forEach(el => {
-        el.classList.toggle('cursor', el.dataset.slotId === cursorSlotId);
-    });
 }
 
 function selectRange(startId, endId) {
@@ -400,264 +428,128 @@ function updateDragSelection() {
     updateSelectionHint();
 }
 
+// --- get/set スロット値 ---
+
+function getSlotValue(slotId) {
+    const { slotIndex, path } = parseSlotId(slotId);
+    return getNodeAtPath(slotIndex, path).value;
+}
+
+function setSlotValue(slotId, value) {
+    const { slotIndex, path } = parseSlotId(slotId);
+    getNodeAtPath(slotIndex, path).value = value;
+}
+
+// --- コンテキストメニュー ---
+
 function showContextMenu(x, y, slotId) {
     const menu = document.getElementById('contextMenu');
-    const splitTo10 = document.getElementById('menuSplitTo10');
-    const splitTo1 = document.getElementById('menuSplitTo1');
-    const splitTo10sec = document.getElementById('menuSplitTo10sec');
-    const mergeTo30 = document.getElementById('menuMergeTo30');
-    const mergeTo10 = document.getElementById('menuMergeTo10');
-    const mergeTo1 = document.getElementById('menuMergeTo1');
-    const fillEmpty = document.getElementById('menuFillEmpty');
+    const { slotIndex, path } = parseSlotId(slotId);
+    const depth = path.length; // 0=30分, 1=10分, 2=1分, 3=10秒
+    const node = getNodeAtPath(slotIndex, path);
 
-    const parts = slotId.split('-');
-    const mainIndex = parseInt(parts[0]);
-    const slot = timeSlots[mainIndex];
+    contextMenuTarget = { slotId, slotIndex, path, depth };
 
-    contextMenuTarget = { slotId, parts, mainIndex };
+    // メニューを動的生成
+    let menuHtml = '';
 
-    // すべて非表示/無効にする
-    splitTo10.classList.add('hidden');
-    splitTo1.classList.add('hidden');
-    splitTo10sec.classList.add('hidden');
-    mergeTo30.classList.add('hidden');
-    mergeTo10.classList.add('hidden');
-    mergeTo1.classList.add('hidden');
-    fillEmpty.classList.add('hidden');
-    document.getElementById('menuClearSlot').classList.add('hidden');
-
-    if (parts.length === 1) {
-        // 30分スロット
-        if (!slot.subdivided) {
-            splitTo10.classList.remove('hidden');
-        } else {
-            mergeTo30.classList.remove('hidden');
-        }
-    } else if (parts.length === 2) {
-        // 10分スロット
-        const subIndex = parseInt(parts[1]);
-        const subSlot = slot.subSlots[subIndex];
-        if (!subSlot.subdivided) {
-            splitTo1.classList.remove('hidden');
-        }
-        mergeTo30.classList.remove('hidden');
-    } else if (parts.length === 3) {
-        // 1分スロット
-        const subIndex = parseInt(parts[1]);
-        const microIndex = parseInt(parts[2]);
-        const microSlot = slot.subSlots[subIndex].microSlots[microIndex];
-        if (!microSlot.subdivided) {
-            splitTo10sec.classList.remove('hidden');
-        }
-        mergeTo10.classList.remove('hidden');
-        mergeTo30.classList.remove('hidden');
-    } else if (parts.length === 4) {
-        // 10秒スロット
-        mergeTo1.classList.remove('hidden');
-        mergeTo10.classList.remove('hidden');
-        mergeTo30.classList.remove('hidden');
+    // 分割メニュー: 現在のレベルが最下位でなく、まだ分割されていない場合
+    if (depth < LEVELS.length - 1 && !node.subdivided) {
+        menuHtml += `<div class="context-menu-item" data-action="split">${LEVELS[depth + 1].splitLabel}</div>`;
     }
 
-    // 値があるスロットなら「以降の連続空き埋め」を表示
+    // マージメニュー: 深さ1以上のすべての祖先レベルに戻せる
+    for (let d = depth - 1; d >= 0; d--) {
+        menuHtml += `<div class="context-menu-item" data-action="merge" data-merge-depth="${d}">${LEVELS[d + 1].mergeLabel}</div>`;
+    }
+    // 深さ0でsubdivided済みなら、自身に戻す（30分に戻す）
+    if (depth === 0 && node.subdivided) {
+        menuHtml += `<div class="context-menu-item" data-action="merge" data-merge-depth="0">${LEVELS[1].mergeLabel}</div>`;
+    }
+
+    // 以降の連続空き埋め
     if (getSlotValue(slotId)) {
-        fillEmpty.classList.remove('hidden');
+        menuHtml += `<div class="context-menu-item" data-action="fill">以降の連続空き埋め</div>`;
     }
 
-    // クリアは常に表示
-    document.getElementById('menuClearSlot').classList.remove('hidden');
+    // クリア
+    menuHtml += `<div class="context-menu-item" data-action="clear">クリア</div>`;
+
+    menu.innerHTML = menuHtml;
+
+    // イベント設定
+    menu.querySelectorAll('.context-menu-item').forEach(item => {
+        item.addEventListener('click', () => {
+            handleContextMenuAction(item.dataset.action, item.dataset.mergeDepth != null ? parseInt(item.dataset.mergeDepth) : null);
+            menu.classList.remove('show');
+        });
+    });
 
     menu.style.left = `${Math.min(x, window.innerWidth - 160)}px`;
     menu.style.top = `${Math.min(y, window.innerHeight - 120)}px`;
     menu.classList.add('show');
 }
 
-// 30分→10分に分割
-document.getElementById('menuSplitTo10').addEventListener('click', () => {
+function handleContextMenuAction(action, mergeDepth) {
     if (!contextMenuTarget) return;
-    const slot = timeSlots[contextMenuTarget.mainIndex];
+    const { slotId, slotIndex, path, depth } = contextMenuTarget;
 
-    if (!slot.subdivided) {
-        slot.subdivided = true;
-        if (slot.value) {
-            slot.subSlots.forEach(sub => sub.value = slot.value);
-        }
-        slot.value = null;
-        selectedSlots.clear();
-        renderTimeSlots();
-        updateSummary();
+    if (action === 'split') {
+        splitNode(slotIndex, path, depth);
+    } else if (action === 'merge') {
+        mergeNode(slotIndex, path, mergeDepth);
+    } else if (action === 'fill') {
+        fillEmpty(slotId);
+    } else if (action === 'clear') {
+        clearSlots();
     }
+}
 
-    document.getElementById('contextMenu').classList.remove('show');
-});
+function splitNode(slotIndex, path, depth) {
+    const node = getNodeAtPath(slotIndex, path);
+    if (node.subdivided || depth >= LEVELS.length - 1) return;
 
-// 10分→1分に分割
-document.getElementById('menuSplitTo1').addEventListener('click', () => {
-    if (!contextMenuTarget || contextMenuTarget.parts.length !== 2) return;
-
-    const slot = timeSlots[contextMenuTarget.mainIndex];
-    const subIndex = parseInt(contextMenuTarget.parts[1]);
-    const subSlot = slot.subSlots[subIndex];
-
-    if (!subSlot.subdivided) {
-        subSlot.subdivided = true;
-        if (subSlot.value) {
-            subSlot.microSlots.forEach(micro => micro.value = subSlot.value);
-        }
-        subSlot.value = null;
-        selectedSlots.clear();
-        renderTimeSlots();
-        updateSummary();
+    node.subdivided = true;
+    if (node.value) {
+        node.children.forEach(child => child.value = node.value);
     }
+    node.value = null;
+    selectedSlots.clear();
+    renderTimeSlots();
+    updateSummary();
+}
 
-    document.getElementById('contextMenu').classList.remove('show');
-});
+function mergeNode(slotIndex, path, targetDepth) {
+    // path を targetDepth まで切り詰めてそのノードをマージ
+    const mergePath = path.slice(0, targetDepth);
+    const node = getNodeAtPath(slotIndex, mergePath);
 
-// 1分→10秒に分割
-document.getElementById('menuSplitTo10sec').addEventListener('click', () => {
-    if (!contextMenuTarget || contextMenuTarget.parts.length !== 3) return;
+    if (targetDepth === 0 && !node.subdivided && path.length === 0) return;
 
-    const slot = timeSlots[contextMenuTarget.mainIndex];
-    const subIndex = parseInt(contextMenuTarget.parts[1]);
-    const microIndex = parseInt(contextMenuTarget.parts[2]);
-    const microSlot = slot.subSlots[subIndex].microSlots[microIndex];
+    // 末端の値を全収集
+    const allValues = collectLeafValues(node, targetDepth);
+    const uniqueValues = [...new Set(allValues)];
 
-    if (!microSlot.subdivided) {
-        microSlot.subdivided = true;
-        if (microSlot.value) {
-            microSlot.nanoSlots.forEach(nano => nano.value = microSlot.value);
+    if (uniqueValues.length > 1) {
+        if (!confirm('異なるコードが混在しているため、全てクリアされます。良いですか？')) {
+            return;
         }
-        microSlot.value = null;
-        selectedSlots.clear();
-        renderTimeSlots();
-        updateSummary();
     }
+    node.value = (uniqueValues.length === 1) ? uniqueValues[0] : null;
+    node.subdivided = false;
+    node.children = createChildren(targetDepth);
 
-    document.getElementById('contextMenu').classList.remove('show');
-});
+    selectedSlots.clear();
+    renderTimeSlots();
+    updateSummary();
+}
 
-// 10分→30分に戻す
-document.getElementById('menuMergeTo30').addEventListener('click', () => {
-    if (!contextMenuTarget) return;
-
-    const slot = timeSlots[contextMenuTarget.mainIndex];
-
-    if (slot.subdivided) {
-        // すべてのサブスロットの値を確認
-        const allValues = [];
-        slot.subSlots.forEach(sub => {
-            if (sub.subdivided) {
-                sub.microSlots.forEach(micro => {
-                    if (micro.subdivided) {
-                        micro.nanoSlots.forEach(nano => allValues.push(nano.value));
-                    } else {
-                        allValues.push(micro.value);
-                    }
-                });
-            } else {
-                allValues.push(sub.value);
-            }
-        });
-
-        // すべて同じ値なら引き継ぐ、違う場合は確認
-        const uniqueValues = [...new Set(allValues)];
-        if (uniqueValues.length > 1) {
-            if (!confirm('異なるコードが混在しているため、全てクリアされます。良いですか？')) {
-                document.getElementById('contextMenu').classList.remove('show');
-                return;
-            }
-        }
-        slot.value = (uniqueValues.length === 1) ? uniqueValues[0] : null;
-
-        slot.subdivided = false;
-        slot.subSlots = createSubSlots();
-
-        selectedSlots.clear();
-        renderTimeSlots();
-        updateSummary();
-    }
-
-    document.getElementById('contextMenu').classList.remove('show');
-});
-
-// 10秒→1分に戻す
-document.getElementById('menuMergeTo1').addEventListener('click', () => {
-    if (!contextMenuTarget || contextMenuTarget.parts.length !== 4) return;
-
-    const slot = timeSlots[contextMenuTarget.mainIndex];
-    const subIndex = parseInt(contextMenuTarget.parts[1]);
-    const microIndex = parseInt(contextMenuTarget.parts[2]);
-    const microSlot = slot.subSlots[subIndex].microSlots[microIndex];
-
-    if (microSlot.subdivided) {
-        const vals = microSlot.nanoSlots.map(n => n.value);
-        const uniqueVals = [...new Set(vals)];
-
-        if (uniqueVals.length > 1) {
-            if (!confirm('異なる値が混在しています。クリアします。良いですか？')) {
-                document.getElementById('contextMenu').classList.remove('show');
-                return;
-            }
-        }
-        microSlot.value = (uniqueVals.length === 1) ? uniqueVals[0] : null;
-
-        microSlot.subdivided = false;
-        microSlot.nanoSlots = createNanoSlots();
-
-        selectedSlots.clear();
-        renderTimeSlots();
-        updateSummary();
-    }
-
-    document.getElementById('contextMenu').classList.remove('show');
-});
-
-// 1分→10分に戻す
-document.getElementById('menuMergeTo10').addEventListener('click', () => {
-    if (!contextMenuTarget || contextMenuTarget.parts.length < 3) return;
-
-    const slot = timeSlots[contextMenuTarget.mainIndex];
-    const subIndex = parseInt(contextMenuTarget.parts[1]);
-    const subSlot = slot.subSlots[subIndex];
-
-    if (subSlot.subdivided) {
-        const vals = [];
-        subSlot.microSlots.forEach(m => {
-            if (m.subdivided) {
-                m.nanoSlots.forEach(n => vals.push(n.value));
-            } else {
-                vals.push(m.value);
-            }
-        });
-        const uniqueVals = [...new Set(vals)];
-
-        if (uniqueVals.length > 1) {
-            if (!confirm('異なる値が混在しています。クリアします。良いですか？')) {
-                document.getElementById('contextMenu').classList.remove('show');
-                return;
-            }
-        }
-        subSlot.value = (uniqueVals.length === 1) ? uniqueVals[0] : null;
-
-        subSlot.subdivided = false;
-        subSlot.microSlots = createMicroSlots();
-
-        selectedSlots.clear();
-        renderTimeSlots();
-        updateSummary();
-    }
-
-    document.getElementById('contextMenu').classList.remove('show');
-});
-
-// 以降の連続空き埋め
-document.getElementById('menuFillEmpty').addEventListener('click', () => {
-    if (!contextMenuTarget) return;
-
-    const code = getSlotValue(contextMenuTarget.slotId);
+function fillEmpty(slotId) {
+    const code = getSlotValue(slotId);
     if (!code) return;
 
     const allIds = getAllSlotIds();
-    const startIdx = allIds.indexOf(contextMenuTarget.slotId);
+    const startIdx = allIds.indexOf(slotId);
     if (startIdx === -1) return;
 
     for (let i = startIdx + 1; i < allIds.length; i++) {
@@ -667,18 +559,17 @@ document.getElementById('menuFillEmpty').addEventListener('click', () => {
 
     renderTimeSlots();
     updateSummary();
-    document.getElementById('contextMenu').classList.remove('show');
-});
+}
 
-// クリア（選択中のスロットを一括クリア）
-document.getElementById('menuClearSlot').addEventListener('click', () => {
+function clearSlots() {
     if (!contextMenuTarget) return;
     const targets = selectedSlots.size > 0 ? selectedSlots : new Set([contextMenuTarget.slotId]);
     targets.forEach(slotId => setSlotValue(slotId, null));
     updateSlotStyles();
     updateSummary();
-    document.getElementById('contextMenu').classList.remove('show');
-});
+}
+
+// --- コードボタン ---
 
 function renderCodeButtons() {
     const container = document.getElementById('codeButtons');
@@ -694,7 +585,6 @@ function renderCodeButtons() {
         </div>
     `;
 
-    // コードボタンの右クリックメニュー
     container.querySelectorAll('.code-btn[data-code]').forEach(btn => {
         btn.addEventListener('contextmenu', (e) => {
             e.preventDefault();
@@ -708,38 +598,8 @@ function renderCodeButtons() {
     });
 }
 
-// スロットにコードを再帰的に設定（既存の分割構造を維持）
-function fillSlotRecursive(slotIndex, code, subIndex, microIndex) {
-    const slot = timeSlots[slotIndex];
+// --- 「今からこれやります！」 ---
 
-    if (subIndex === undefined) {
-        if (slot.subdivided) {
-            for (let s = 0; s < 3; s++) fillSlotRecursive(slotIndex, code, s);
-        } else {
-            slot.value = code;
-        }
-        return;
-    }
-
-    const subSlot = slot.subSlots[subIndex];
-    if (microIndex === undefined) {
-        if (subSlot.subdivided) {
-            for (let m = 0; m < 10; m++) fillSlotRecursive(slotIndex, code, subIndex, m);
-        } else {
-            subSlot.value = code;
-        }
-        return;
-    }
-
-    const microSlot = subSlot.microSlots[microIndex];
-    if (microSlot.subdivided) {
-        for (let n = 0; n < 6; n++) microSlot.nanoSlots[n].value = code;
-    } else {
-        microSlot.value = code;
-    }
-}
-
-// 「今からこれやります！」
 function startActivity(code) {
     const now = new Date();
     const nowSec = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
@@ -749,7 +609,7 @@ function startActivity(code) {
     for (let i = 0; i < timeSlots.length; i++) {
         const s = timeSlots[i];
         const startSec = s.startHour * 3600 + s.startMin * 60;
-        if (nowSec >= startSec && nowSec < startSec + 1800) {
+        if (nowSec >= startSec && nowSec < startSec + LEVELS[0].seconds) {
             currentSlotIndex = i;
             break;
         }
@@ -763,62 +623,68 @@ function startActivity(code) {
     const slot = timeSlots[currentSlotIndex];
     const slotStartSec = slot.startHour * 3600 + slot.startMin * 60;
     const offsetSec = nowSec - slotStartSec;
-    const subIndex = Math.floor(offsetSec / 600);
-    const microIndex = Math.floor((offsetSec % 600) / 60);
-    const nanoIndex = Math.floor((offsetSec % 60) / 10);
 
-    // --- 現在の30分スロットを10秒精度まで分割 ---
-    if (!slot.subdivided) {
-        slot.subdivided = true;
-        if (slot.value) {
-            slot.subSlots.forEach(sub => sub.value = slot.value);
+    // 各レベルのインデックスを算出
+    const indices = [];
+    let remaining = offsetSec;
+    for (let d = 1; d < LEVELS.length; d++) {
+        const childSec = LEVELS[d].seconds;
+        indices.push(Math.floor(remaining / childSec));
+        remaining = remaining % childSec;
+    }
+
+    // 必要な分割深さを決定（末尾の連続する0は分割不要）
+    let splitDepth = 0;
+    for (let i = indices.length - 1; i >= 0; i--) {
+        if (indices[i] !== 0) {
+            splitDepth = i + 1;
+            break;
         }
-        slot.value = null;
     }
 
-    const subSlot = slot.subSlots[subIndex];
-    if (!subSlot.subdivided) {
-        subSlot.subdivided = true;
-        if (subSlot.value) {
-            subSlot.microSlots.forEach(micro => micro.value = subSlot.value);
+    if (splitDepth === 0) {
+        // 境界ぴったり → 分割せずそのまま埋める
+        fillNodeRecursive(slot, 0, code);
+    } else {
+        // splitDepthまで分割
+        let node = slot;
+        for (let d = 0; d < splitDepth; d++) {
+            if (!node.subdivided) {
+                node.subdivided = true;
+                if (node.value) {
+                    node.children.forEach(child => child.value = node.value);
+                }
+                node.value = null;
+            }
+            if (d < splitDepth - 1) {
+                node = node.children[indices[d]];
+            }
         }
-        subSlot.value = null;
-    }
 
-    const microSlot = subSlot.microSlots[microIndex];
-    if (!microSlot.subdivided) {
-        microSlot.subdivided = true;
-        if (microSlot.value) {
-            microSlot.nanoSlots.forEach(nano => nano.value = microSlot.value);
+        // 分割した最深レベルで、現在のインデックスから末尾まで埋める
+        const deepestParent = getNodeAtPath(currentSlotIndex, indices.slice(0, splitDepth - 1));
+        for (let n = indices[splitDepth - 1]; n < deepestParent.children.length; n++) {
+            fillNodeRecursive(deepestParent.children[n], splitDepth, code);
         }
-        microSlot.value = null;
+
+        // 各レベルで残りの兄弟スロットを埋める（深い方から浅い方へ）
+        for (let d = splitDepth - 1; d >= 1; d--) {
+            const parent = getNodeAtPath(currentSlotIndex, indices.slice(0, d - 1));
+            for (let i = indices[d - 1] + 1; i < parent.children.length; i++) {
+                fillNodeRecursive(parent.children[i], d, code);
+            }
+        }
     }
 
-    // 現在のナノスロットから分末まで埋める
-    for (let n = nanoIndex; n < 6; n++) {
-        microSlot.nanoSlots[n].value = code;
-    }
-
-    // 残りの1分スロット（同じ10分ブロック内）を埋める
-    for (let m = microIndex + 1; m < 10; m++) {
-        fillSlotRecursive(currentSlotIndex, code, subIndex, m);
-    }
-
-    // 残りの10分スロット（同じ30分ブロック内）を埋める
-    for (let s = subIndex + 1; s < 3; s++) {
-        fillSlotRecursive(currentSlotIndex, code, s);
-    }
-
-    // --- 次の30分間のスロットを埋める（分割せず） ---
-    const endSec = nowSec + 1800;
+    // 次の30分間のスロットを埋める
+    const endSec = nowSec + LEVELS[0].seconds;
     for (let i = currentSlotIndex + 1; i < timeSlots.length; i++) {
         const s = timeSlots[i];
         const sStartSec = s.startHour * 3600 + s.startMin * 60;
 
-        fillSlotRecursive(i, code);
+        fillNodeRecursive(s, 0, code);
 
-        // このスロットがnow+30minを含んでいたら終了
-        if (endSec < sStartSec + 1800) break;
+        if (endSec < sStartSec + LEVELS[0].seconds) break;
     }
 
     renderTimeSlots();
@@ -835,37 +701,7 @@ document.getElementById('menuStartActivity').addEventListener('click', () => {
     if (code) startActivity(code);
 });
 
-function getSlotValue(slotId) {
-    const parts = slotId.split('-');
-    const mainIndex = parseInt(parts[0]);
-    const slot = timeSlots[mainIndex];
-
-    if (parts.length === 1) {
-        return slot.value;
-    } else if (parts.length === 2) {
-        return slot.subSlots[parseInt(parts[1])].value;
-    } else if (parts.length === 3) {
-        return slot.subSlots[parseInt(parts[1])].microSlots[parseInt(parts[2])].value;
-    } else {
-        return slot.subSlots[parseInt(parts[1])].microSlots[parseInt(parts[2])].nanoSlots[parseInt(parts[3])].value;
-    }
-}
-
-function setSlotValue(slotId, value) {
-    const parts = slotId.split('-');
-    const mainIndex = parseInt(parts[0]);
-    const slot = timeSlots[mainIndex];
-
-    if (parts.length === 1) {
-        slot.value = value;
-    } else if (parts.length === 2) {
-        slot.subSlots[parseInt(parts[1])].value = value;
-    } else if (parts.length === 3) {
-        slot.subSlots[parseInt(parts[1])].microSlots[parseInt(parts[2])].value = value;
-    } else {
-        slot.subSlots[parseInt(parts[1])].microSlots[parseInt(parts[2])].nanoSlots[parseInt(parts[3])].value = value;
-    }
-}
+// --- スタイル更新 ---
 
 function updateSlotStyles() {
     document.querySelectorAll('.time-slot').forEach(el => {
@@ -874,7 +710,6 @@ function updateSlotStyles() {
         const value = getSlotValue(slotId);
 
         el.classList.toggle('selected', isSelected);
-        el.classList.toggle('has-value', !!value);
         el.classList.toggle('cursor', slotId === cursorSlotId);
 
         const valueEl = el.querySelector('.time-value');
@@ -907,6 +742,8 @@ function applyCode(code) {
     updateSummary();
 }
 
+// --- サマリー ---
+
 function formatSeconds(totalSec) {
     const hours = Math.floor(totalSec / 3600);
     const mins = Math.floor((totalSec % 3600) / 60);
@@ -919,49 +756,7 @@ function formatSeconds(totalSec) {
 
 function updateSummary() {
     const summary = {};
-    let totalSeconds = 0;
-
-    timeSlots.forEach(slot => {
-        if (slot.subdivided) {
-            slot.subSlots.forEach(sub => {
-                if (sub.subdivided) {
-                    sub.microSlots.forEach(micro => {
-                        if (micro.subdivided) {
-                            // 10秒単位
-                            micro.nanoSlots.forEach(nano => {
-                                if (nano.value) {
-                                    if (!summary[nano.value]) summary[nano.value] = 0;
-                                    summary[nano.value] += 10;
-                                    totalSeconds += 10;
-                                }
-                            });
-                        } else {
-                            // 1分単位
-                            if (micro.value) {
-                                if (!summary[micro.value]) summary[micro.value] = 0;
-                                summary[micro.value] += 60;
-                                totalSeconds += 60;
-                            }
-                        }
-                    });
-                } else {
-                    // 10分単位
-                    if (sub.value) {
-                        if (!summary[sub.value]) summary[sub.value] = 0;
-                        summary[sub.value] += 600;
-                        totalSeconds += 600;
-                    }
-                }
-            });
-        } else {
-            // 30分単位
-            if (slot.value) {
-                if (!summary[slot.value]) summary[slot.value] = 0;
-                summary[slot.value] += 1800;
-                totalSeconds += 1800;
-            }
-        }
-    });
+    timeSlots.forEach(slot => accumulateSummary(slot, 0, summary));
 
     // 各コードの秒を分単位に切り捨て
     const truncated = {};
@@ -992,51 +787,21 @@ function updateSummary() {
     const totalHours = Math.floor(totalTruncated / 3600);
     const totalMins = Math.floor((totalTruncated % 3600) / 60);
     document.getElementById('totalTime').textContent = `${totalHours}:${totalMins.toString().padStart(2, '0')}`;
+
+    saveToStorage();
 }
+
+// --- クリップボード ---
 
 function copyToClipboard() {
     const summary = {};
-
-    timeSlots.forEach(slot => {
-        if (slot.subdivided) {
-            slot.subSlots.forEach(sub => {
-                if (sub.subdivided) {
-                    sub.microSlots.forEach(micro => {
-                        if (micro.subdivided) {
-                            micro.nanoSlots.forEach(nano => {
-                                if (nano.value) {
-                                    if (!summary[nano.value]) summary[nano.value] = 0;
-                                    summary[nano.value] += 10;
-                                }
-                            });
-                        } else {
-                            if (micro.value) {
-                                if (!summary[micro.value]) summary[micro.value] = 0;
-                                summary[micro.value] += 60;
-                            }
-                        }
-                    });
-                } else {
-                    if (sub.value) {
-                        if (!summary[sub.value]) summary[sub.value] = 0;
-                        summary[sub.value] += 600;
-                    }
-                }
-            });
-        } else {
-            if (slot.value) {
-                if (!summary[slot.value]) summary[slot.value] = 0;
-                summary[slot.value] += 1800;
-            }
-        }
-    });
+    timeSlots.forEach(slot => accumulateSummary(slot, 0, summary));
 
     if (Object.keys(summary).length === 0) {
         showToast('記録がありません');
         return;
     }
 
-    // 各コードの秒を分単位に切り捨て
     const truncated = {};
     for (const [code, seconds] of Object.entries(summary)) {
         truncated[code] = Math.floor(seconds / 60) * 60;
@@ -1069,6 +834,8 @@ function copyToClipboard() {
     const text = lines.join('\n');
     showReportPreview(text);
 }
+
+// --- レポート ---
 
 function showReportPreview(text) {
     const overlay = document.getElementById('reportOverlay');
@@ -1103,11 +870,11 @@ function showToast(message) {
     setTimeout(() => toast.classList.remove('show'), 2500);
 }
 
-// キーボードショートカット
+// --- キーボードショートカット ---
+
 document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-    // 矢印キー: カーソル移動
     const arrowMap = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
     if (arrowMap[e.key]) {
         e.preventDefault();
@@ -1115,14 +882,23 @@ document.addEventListener('keydown', (e) => {
         return;
     }
 
-    // Backspace: クリア
+    // Cmd+A / Ctrl+A: 全選択
+    if (e.key === 'a' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        const allIds = getAllSlotIds();
+        selectedSlots = new Set(allIds);
+        if (allIds.length > 0) cursorSlotId = allIds[allIds.length - 1];
+        updateSlotStyles();
+        updateSelectionHint();
+        return;
+    }
+
     if (e.key === 'Backspace') {
         e.preventDefault();
         applyCode(null);
         return;
     }
 
-    // 数字キー: 1-9でコード適用、0でクリア
     const key = parseInt(e.key);
     if (isNaN(key)) return;
 
@@ -1133,8 +909,10 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// 初期化
+// --- 初期化 ---
+
 initTimeSlots();
+loadFromStorage();
 renderTimeSlots();
 renderCodeButtons();
 updateSummary();

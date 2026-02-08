@@ -109,14 +109,6 @@ h1 {
     background: #ede9fe;
 }
 
-.time-slot.has-value {
-    background: #f0fdf4;
-}
-
-.time-slot.selected.has-value {
-    background: #ede9fe;
-}
-
 .time-slot.cursor {
     outline: 2px solid #333;
     outline-offset: -2px;
@@ -124,50 +116,35 @@ h1 {
 }
 
 /* 10分スロット */
-.time-slot.sub-slot {
+.time-slot.level-1 {
     padding: 3px 8px 3px 16px;
     font-size: 0.65rem;
-    background: #fefce8;
-    border-left: 3px solid #eab308;
+    background: #f0f1f3;
 }
 
-.time-slot.sub-slot.has-value {
-    background: #ecfccb;
-}
-
-.time-slot.sub-slot.selected {
+.time-slot.level-1.selected {
     background: #ede9fe;
 }
 
 /* 1分スロット */
-.time-slot.micro-slot {
+.time-slot.level-2 {
     padding: 2px 8px 2px 28px;
     font-size: 0.55rem;
-    background: #fef2f2;
-    border-left: 3px solid #f87171;
+    background: #e8e9eb;
 }
 
-.time-slot.micro-slot.has-value {
-    background: #fce7f3;
-}
-
-.time-slot.micro-slot.selected {
+.time-slot.level-2.selected {
     background: #ede9fe;
 }
 
 /* 10秒スロット */
-.time-slot.nano-slot {
+.time-slot.level-3 {
     padding: 1px 8px 1px 40px;
     font-size: 0.5rem;
-    background: #eff6ff;
-    border-left: 3px solid #60a5fa;
+    background: #e0e1e3;
 }
 
-.time-slot.nano-slot.has-value {
-    background: #dbeafe;
-}
-
-.time-slot.nano-slot.selected {
+.time-slot.level-3.selected {
     background: #ede9fe;
 }
 
@@ -179,17 +156,17 @@ h1 {
     white-space: nowrap;
 }
 
-.time-slot.sub-slot .time-label {
+.time-slot.level-1 .time-label {
     font-size: 0.6rem;
     min-width: 65px;
 }
 
-.time-slot.micro-slot .time-label {
+.time-slot.level-2 .time-label {
     font-size: 0.5rem;
     min-width: 55px;
 }
 
-.time-slot.nano-slot .time-label {
+.time-slot.level-3 .time-label {
     font-size: 0.45rem;
     min-width: 65px;
 }
@@ -206,15 +183,15 @@ h1 {
     color: #ccc;
 }
 
-.time-slot.sub-slot .time-value {
+.time-slot.level-1 .time-value {
     font-size: 0.65rem;
 }
 
-.time-slot.micro-slot .time-value {
+.time-slot.level-2 .time-value {
     font-size: 0.5rem;
 }
 
-.time-slot.nano-slot .time-value {
+.time-slot.level-3 .time-value {
     font-size: 0.45rem;
 }
 
@@ -229,15 +206,15 @@ h1 {
     color: #888;
 }
 
-.time-slot.sub-slot .value-desc {
+.time-slot.level-1 .value-desc {
     font-size: 0.55rem;
 }
 
-.time-slot.micro-slot .value-desc {
+.time-slot.level-2 .value-desc {
     font-size: 0.45rem;
 }
 
-.time-slot.nano-slot .value-desc {
+.time-slot.level-3 .value-desc {
     font-size: 0.4rem;
 }
 

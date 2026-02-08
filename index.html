@@ -15,7 +15,7 @@
 
         <div class="main-content">
             <div class="card">
-                <h2 class="card-title">タイムスロット（クリック/ドラッグで選択）</h2>
+                <h2 class="card-title">タイムスロット（クリックで選択）</h2>
                 <div class="time-slots" id="timeSlots"></div>
             </div>
 
@@ -58,17 +58,8 @@
 
     <div class="toast" id="toast">クリップボードにコピーしました！</div>
 
-    <!-- コンテキストメニュー -->
-    <div class="context-menu" id="contextMenu">
-        <div class="context-menu-item" id="menuSplitTo10">10分に分割</div>
-        <div class="context-menu-item" id="menuSplitTo1">1分に分割</div>
-        <div class="context-menu-item" id="menuSplitTo10sec">10秒に分割</div>
-        <div class="context-menu-item" id="menuMergeTo30">30分に戻す</div>
-        <div class="context-menu-item" id="menuMergeTo10">10分に戻す</div>
-        <div class="context-menu-item" id="menuMergeTo1">1分に戻す</div>
-        <div class="context-menu-item" id="menuFillEmpty">以降の連続空き埋め</div>
-        <div class="context-menu-item" id="menuClearSlot">クリア</div>
-    </div>
+    <!-- コンテキストメニュー（JSで動的生成） -->
+    <div class="context-menu" id="contextMenu"></div>
 
     <!-- コードボタン用コンテキストメニュー -->
     <div class="context-menu" id="codeContextMenu">
