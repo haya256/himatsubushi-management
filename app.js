@@ -173,13 +173,18 @@ let contextMenuTarget = null;
 
 // --- 表示ヘルパー ---
 
+function escapeHtml(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function getValueDisplay(value) {
     if (!value) return '--';
+    const safe = escapeHtml(value);
     const codeInfo = himatsubushiCodes.find(c => c.code === value);
     if (codeInfo) {
-        return `<span class="value-code">${value}</span><span class="value-desc">${codeInfo.description}</span>`;
+        return `<span class="value-code">${safe}</span><span class="value-desc">${escapeHtml(codeInfo.description)}</span>`;
     }
-    return value;
+    return safe;
 }
 
 function getSlotLabel(slotIndex, path) {
@@ -574,16 +579,21 @@ function clearSlots() {
 function renderCodeButtons() {
     const container = document.getElementById('codeButtons');
     container.innerHTML = himatsubushiCodes.map(item => `
-        <div class="code-btn" data-code="${item.code}" onclick="applyCode('${item.code}')">
-            <div class="code-btn-code">${item.code}</div>
-            <div class="code-btn-desc">${item.description}</div>
+        <div class="code-btn" data-code="${escapeHtml(item.code)}">
+            <div class="code-btn-code">${escapeHtml(item.code)}</div>
+            <div class="code-btn-desc">${escapeHtml(item.description)}</div>
         </div>
     `).join('') + `
-        <div class="code-btn clear-btn" onclick="applyCode(null)">
+        <div class="code-btn clear-btn" data-action="clear">
             <div class="code-btn-code">CLR</div>
             <div class="code-btn-desc">クリア</div>
         </div>
     `;
+
+    container.querySelectorAll('.code-btn[data-code]').forEach(btn => {
+        btn.addEventListener('click', () => applyCode(btn.dataset.code));
+    });
+    container.querySelector('.code-btn[data-action="clear"]').addEventListener('click', () => applyCode(null));
 
     container.querySelectorAll('.code-btn[data-code]').forEach(btn => {
         btn.addEventListener('contextmenu', (e) => {
@@ -776,7 +786,7 @@ function updateSummary() {
                 const codeInfo = himatsubushiCodes.find(c => c.code === code);
                 return `
                     <div class="summary-item">
-                        <span class="summary-item-code">${code} ${codeInfo?.description || ''}</span>
+                        <span class="summary-item-code">${escapeHtml(code)} ${escapeHtml(codeInfo?.description || '')}</span>
                         <span class="summary-item-time">${timeStr}</span>
                     </div>
                 `;
