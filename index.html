@@ -15,14 +15,14 @@
 
         <div class="main-content">
             <div class="card">
-                <h2 class="card-title">タイムスロット（クリック/ドラッグで選択、右クリックで分割）</h2>
+                <h2 class="card-title">タイムスロット（クリック/ドラッグで選択）</h2>
                 <div class="time-slots" id="timeSlots"></div>
             </div>
 
             <div class="summary-section">
                 <div class="card">
                     <h2 class="card-title">コード入力</h2>
-                    <div class="selection-hint" id="selectionHint">時間枠を選択してください</div>
+                    <div class="selection-hint" id="selectionHint">タイムスロットを選択してください</div>
                     <div class="code-buttons" id="codeButtons"></div>
 
                     <h2 class="card-title">今日の集計</h2>
@@ -41,14 +41,38 @@
         </div>
     </div>
 
+    <!-- レポートプレビュー -->
+    <div class="report-overlay" id="reportOverlay" onclick="if(event.target===this)closeReportPreview()">
+        <div class="report-modal">
+            <div class="report-header">
+                <span class="report-title">レポートプレビュー</span>
+                <span class="report-close" onclick="closeReportPreview()">&times;</span>
+            </div>
+            <pre class="report-content" id="reportContent"></pre>
+            <div class="report-footer">
+                <span class="report-copy-status" id="reportCopyStatus"></span>
+                <button class="btn btn-primary" onclick="copyReport()">コピー</button>
+            </div>
+        </div>
+    </div>
+
     <div class="toast" id="toast">クリップボードにコピーしました！</div>
 
     <!-- コンテキストメニュー -->
     <div class="context-menu" id="contextMenu">
         <div class="context-menu-item" id="menuSplitTo10">10分に分割</div>
         <div class="context-menu-item" id="menuSplitTo1">1分に分割</div>
+        <div class="context-menu-item" id="menuSplitTo10sec">10秒に分割</div>
         <div class="context-menu-item" id="menuMergeTo30">30分に戻す</div>
         <div class="context-menu-item" id="menuMergeTo10">10分に戻す</div>
+        <div class="context-menu-item" id="menuMergeTo1">1分に戻す</div>
+        <div class="context-menu-item" id="menuFillEmpty">以降の連続空き埋め</div>
+        <div class="context-menu-item" id="menuClearSlot">クリア</div>
+    </div>
+
+    <!-- コードボタン用コンテキストメニュー -->
+    <div class="context-menu" id="codeContextMenu">
+        <div class="context-menu-item" id="menuStartActivity">今からこれやります！</div>
     </div>
 
     <script src="app.js"></script>
